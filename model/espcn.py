@@ -1,0 +1,35 @@
+"""ESPCN (Shi et al. 2016), used here at scale=1 as a same-resolution restoration net.
+
+The final conv produces `scale**2` channels per output channel and PixelShuffle
+reshuffles them into a `scale`x larger grid. At scale=1 — our observed->ideal
+deconvolution setup, where input and target are the same size — PixelShuffle is a
+no-op and the network reduces to three convolutions. This is a deliberately small
+phase-1 baseline to validate the pipeline; a deeper restoration net is future work.
+"""
+
+import torch.nn as nn
+
+
+class ESPCN(nn.Module):
+    def __init__(self, scale=1, channels=64, in_channels=1):
+        super().__init__()
+        mid = channels // 2
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channels, channels, kernel_size=5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, mid, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+        )
+        self.upsample = nn.Sequential(
+            nn.Conv2d(mid, in_channels * scale * scale, kernel_size=3, padding=1),
+            nn.PixelShuffle(scale),
+        )
+
+    def forward(self, x):
+        return self.upsample(self.features(x))
+
+
+def build_model(model_config):
+    if model_config.name != "espcn":
+        raise ValueError(f"unknown model: {model_config.name}")
+    return ESPCN(channels=model_config.channels)
