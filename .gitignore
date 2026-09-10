@@ -14,3 +14,6 @@ wheels/
 
 # Data (symlink to external storage)
 /storage
+
+# Local copy of exported results (no drive)
+/tmp-storage
