@@ -1243,6 +1243,7 @@ dependencies = [
     { name = "astropy" },
     { name = "ipykernel" },
     { name = "matplotlib" },
+    { name = "pyyaml" },
     { name = "torch" },
 ]
 
@@ -1251,6 +1252,7 @@ requires-dist = [
     { name = "astropy", specifier = ">=8.0.0" },
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "matplotlib", specifier = ">=3.11.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "torch", specifier = ">=2.12.1" },
 ]
 

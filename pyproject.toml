@@ -8,5 +8,6 @@ dependencies = [
     "astropy>=8.0.0",
     "ipykernel>=7.3.0",
     "matplotlib>=3.11.0",
+    "pyyaml>=6.0.3",
     "torch>=2.12.1",
 ]
