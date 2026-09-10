@@ -1,0 +1,26 @@
+seed: 42
+
+data:
+  observed_fits: storage/M31/m31bJ100_trim.fits
+  ideal_fits: storage/M31/m31bJ100.fits
+  out_dir: storage/patches/jband
+  patch_size: 64
+  stride: 64
+  observed_normalize: asinh
+  ideal_normalize: asinh
+  asinh_softening: 3.0
+  split_block_size: 505
+  val_fraction: 0.2
+
+model:
+  name: espcn
+  channels: 64
+
+train:
+  out_dir: storage/runs/jband
+  epochs: 50
+  batch_size: 64
+  lr: 1.0e-3
+  loss: l1
+  num_workers: 2
+  device: auto
