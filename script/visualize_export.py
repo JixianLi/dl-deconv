@@ -80,7 +80,9 @@ def render_full_images(export_dir, figures_dir, colormap):
 
 
 def patch_indices(split_dir):
-    return sorted(path.name.split("-")[0] for path in split_dir.glob("*-input.fits"))
+    # macOS writes `._<name>` AppleDouble companions on non-HFS drives; they match the glob.
+    return sorted(path.name.removesuffix("-input.fits") for path in split_dir.glob("*-input.fits")
+                  if not path.name.startswith("."))
 
 
 def render_patch_grid(split_dir, figures_dir, colormap, seed):
