@@ -24,7 +24,6 @@ from model.espcn import build_model
 
 NUM_EXAMPLES = 6
 CMAP = "inferno"
-ESPCN_RECEPTIVE_FIELD_RADIUS = 4  # 5x5 + 3x3 + 3x3 convs: 2 + 1 + 1 px
 FULL_IMAGE_TILE_SIZE = 512
 
 
@@ -85,7 +84,7 @@ def predict_full_image(model, observed, device, tile_size=FULL_IMAGE_TILE_SIZE):
     are cropped. At true image borders the tile edge IS the image edge, so the model's
     zero padding matches the one-pass result there too.
     """
-    halo = ESPCN_RECEPTIVE_FIELD_RADIUS
+    halo = model.receptive_field_radius
     height, width = observed.shape
     prediction = np.empty((height, width), dtype=np.float32)
     with torch.no_grad():
