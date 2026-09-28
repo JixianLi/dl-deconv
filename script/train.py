@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 
 from core.config import dump_config, load_config
 from core.runtime import psnr, resolve_device, set_seed
@@ -47,8 +47,9 @@ def main(config_path):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     train_set = PatchDataset(config.data.out_dir, "train")
-    val_set = PatchDataset(config.data.out_dir, "val")
-    train_loader = DataLoader(train_set, batch_size=train_config.batch_size, shuffle=True,
+    val_set = PatchDataset(config.data.out_dir, "val", stride=config.data.patch_size)
+    train_sampler = RandomSampler(train_set, num_samples=train_config.samples_per_epoch)
+    train_loader = DataLoader(train_set, batch_size=train_config.batch_size, sampler=train_sampler,
                               num_workers=train_config.num_workers, drop_last=True)
     val_loader = DataLoader(val_set, batch_size=train_config.batch_size, shuffle=False,
                             num_workers=train_config.num_workers)
@@ -57,7 +58,8 @@ def main(config_path):
     loss_fn = LOSSES[train_config.loss]()
     optimizer = torch.optim.Adam(model.parameters(), lr=train_config.lr)
 
-    print(f"device={device}  train={len(train_set)}  val={len(val_set)}")
+    print(f"device={device}  train={len(train_set)} (drawing {train_config.samples_per_epoch}/epoch)  "
+          f"val={len(val_set)}")
     metrics = []
     for epoch in range(1, train_config.epochs + 1):
         model.train()

@@ -5,7 +5,7 @@ data:
   ideal_fits: storage/M31/m31bH100.fits
   out_dir: storage/patches/baseline
   patch_size: 64
-  stride: 64           # non-overlapping patches
+  stride: 1            # every window; PatchDataset crops them lazily from the full image
   observed_normalize: asinh   # asinh | log | linear
   ideal_normalize: asinh      # sparse point-source field; asinh keeps faint-source dynamic range
   asinh_softening: 3.0
@@ -22,5 +22,6 @@ train:
   batch_size: 64
   lr: 1.0e-3
   loss: l1
+  samples_per_epoch: 200000
   num_workers: 2
   device: auto

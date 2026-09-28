@@ -1,4 +1,4 @@
-"""Config schema and (de)serialization for the SISR baseline.
+"""Config schema and (de)serialization for the deconvolution baseline.
 
 A run is fully specified by one YAML file with three sections (`data`, `model`,
 `train`) plus a top-level `seed`. Defaults live here in the dataclasses, so the
@@ -39,6 +39,7 @@ class TrainConfig:
     batch_size: int = 64
     lr: float = 1.0e-3
     loss: str = "l1"  # l1 | mse
+    samples_per_epoch: int = 200_000  # windows drawn per epoch; the stride-1 train set is far larger
     num_workers: int = 2
     device: str = "auto"  # auto | cpu | cuda | mps
 
