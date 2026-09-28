@@ -18,7 +18,8 @@ model:
 
 train:
   out_dir: storage/runs/jband
-  epochs: 50
+  iterations: 2400
+  val_interval: 240
   batch_size: 64
   lr: 1.0e-3
   loss: l1

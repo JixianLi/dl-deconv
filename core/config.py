@@ -35,11 +35,11 @@ class ModelConfig:
 @dataclass
 class TrainConfig:
     out_dir: str
-    epochs: int = 50
+    iterations: int = 150_000  # optimizer steps (batches) over the whole run
     batch_size: int = 64
     lr: float = 1.0e-3
     loss: str = "l1"  # l1 | mse
-    samples_per_epoch: int = 200_000  # windows drawn per epoch; the stride-1 train set is far larger
+    val_interval: int = 3000  # iterations between validations (and metrics.csv rows)
     num_workers: int = 2
     device: str = "auto"  # auto | cpu | cuda | mps
 

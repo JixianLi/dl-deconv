@@ -18,10 +18,10 @@ model:
 
 train:
   out_dir: storage/runs/baseline
-  epochs: 50
+  iterations: 150000
   batch_size: 64
   lr: 1.0e-3
   loss: l1
-  samples_per_epoch: 200000
+  val_interval: 3000
   num_workers: 2
   device: auto
