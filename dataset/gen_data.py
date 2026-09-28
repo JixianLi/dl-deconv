@@ -1,21 +1,23 @@
-"""Generate a deconvolution patch dataset from a paired FITS image.
+"""Generate a deconvolution window dataset from a paired FITS image.
 
 Pipeline (run as `uv run python -m dataset.gen_data config/baseline.yaml`):
 
   1. Load the observed (trimmed) and ideal (untrimmed) FITS; they share a pixel grid.
-  2. Lay a grid of patch top-left corners (step = data.stride).
-  3. Assign each patch to a spatial block (data.split_block_size); whole blocks go to
-     train or val (seeded), so train/val pixels never overlap.
-  4. Cut observed and ideal patches at the SAME corners (they are co-registered).
-  5. Fit a normalization on TRAIN pixels only, separately for observed and ideal, since
-     the two live in very different value regimes. Apply to every patch.
-  6. Save train/val observed+ideal arrays, the normalization params, a manifest, and the
-     resolved config into data.out_dir.
+  2. Tile the image into spatial blocks (data.split_block_size) and send a seeded subset
+     of whole blocks to val, giving a per-pixel val mask.
+  3. Enumerate window top-left corners (step = data.stride). A window belongs to a split
+     only if ALL its pixels lie in that split's blocks; windows straddling a train/val
+     border are dropped, so train and val never share a pixel.
+  4. Fit a normalization on the train-block pixels of the full image, separately for
+     observed and ideal, since the two live in very different value regimes.
+  5. Save the full normalized images, the per-split window corners, the val mask, the
+     normalization params, and the resolved config into data.out_dir.
 
-Output arrays are float32, shape (N, 1, H, W), normalized to roughly [0, 1].
+Windows are not materialized: at stride 1 they would be ~480 GB. PatchDataset crops
+them from observed.npy / ideal.npy on demand. Images are float32, shape (H, W),
+normalized to roughly [0, 1]; corners are int32, shape (N, 2) as (y, x).
 """
 
-import csv
 import json
 import sys
 from pathlib import Path
@@ -35,34 +37,39 @@ def load_fits(path):
     raise ValueError(f"no 2-d image HDU found in {path}")
 
 
-def grid_corners(height, width, patch_size, stride):
-    ys = range(0, height - patch_size + 1, stride)
-    xs = range(0, width - patch_size + 1, stride)
-    return [(y, x) for y in ys for x in xs]
-
-
-def assign_splits(corners, patch_size, block_size, val_fraction, rng):
-    """Map each patch to its (block_y, block_x); send a seeded subset of blocks to val."""
-    blocks = sorted({((y + patch_size // 2) // block_size, (x + patch_size // 2) // block_size)
-                     for y, x in corners})
+def block_split_mask(height, width, block_size, val_fraction, rng):
+    """Per-pixel bool image, True where the pixel's block was sent to val (seeded)."""
+    num_blocks_y = -(-height // block_size)
+    num_blocks_x = -(-width // block_size)
+    blocks = [(block_y, block_x) for block_y in range(num_blocks_y) for block_x in range(num_blocks_x)]
     num_val = round(val_fraction * len(blocks))
-    permuted = [blocks[i] for i in rng.permutation(len(blocks))]
-    val_blocks = set(permuted[:num_val])
-
-    block_of = {}
-    splits = []
-    for y, x in corners:
-        block = ((y + patch_size // 2) // block_size, (x + patch_size // 2) // block_size)
-        block_of[(y, x)] = block
-        splits.append("val" if block in val_blocks else "train")
-    return splits, block_of
+    val_mask = np.zeros((height, width), dtype=bool)
+    for position in rng.permutation(len(blocks))[:num_val]:
+        block_y, block_x = blocks[position]
+        val_mask[block_y * block_size:(block_y + 1) * block_size,
+                 block_x * block_size:(block_x + 1) * block_size] = True
+    return val_mask
 
 
-def cut_patches(image, corners, patch_size):
-    patches = np.empty((len(corners), 1, patch_size, patch_size), dtype=np.float32)
-    for index, (y, x) in enumerate(corners):
-        patches[index, 0] = image[y:y + patch_size, x:x + patch_size]
-    return patches
+def window_corners(val_mask, patch_size, stride):
+    """(train_corners, val_corners) for windows lying wholly in one split, on a `stride` grid.
+
+    The val-pixel count of every window comes from a summed-area table: with
+    S[y, x] = sum of val_mask[:y, :x], the window at (y, x) holds
+    S[y+P, x+P] - S[y, x+P] - S[y+P, x] + S[y, x] val pixels, so all windows cost O(H*W).
+    """
+    height, width = val_mask.shape
+    summed = np.zeros((height + 1, width + 1), dtype=np.int64)
+    summed[1:, 1:] = val_mask.cumsum(axis=0).cumsum(axis=1)
+    size = patch_size
+    val_counts = (summed[size:, size:] - summed[:-size, size:]
+                  - summed[size:, :-size] + summed[:-size, :-size])
+
+    on_grid = np.zeros_like(val_counts, dtype=bool)
+    on_grid[::stride, ::stride] = True
+    train_corners = np.argwhere(on_grid & (val_counts == 0)).astype(np.int32)
+    val_corners = np.argwhere(on_grid & (val_counts == size * size)).astype(np.int32)
+    return train_corners, val_corners
 
 
 def main(config_path):
@@ -79,39 +86,25 @@ def main(config_path):
                          "FITS must share a pixel grid")
     height, width = observed_image.shape
 
-    patch_size = data.patch_size
-    corners = grid_corners(height, width, patch_size, data.stride)
-    splits, block_of = assign_splits(corners, patch_size, data.split_block_size,
-                                     data.val_fraction, rng)
+    val_mask = block_split_mask(height, width, data.split_block_size, data.val_fraction, rng)
+    train_corners, val_corners = window_corners(val_mask, data.patch_size, data.stride)
 
-    observed_raw = cut_patches(observed_image, corners, patch_size)
-    ideal_raw = cut_patches(ideal_image, corners, patch_size)
-
-    splits = np.array(splits)
-    train_mask = splits == "train"
-    observed_norm = fit_normalization(observed_raw[train_mask], data.observed_normalize,
+    observed_norm = fit_normalization(observed_image[~val_mask], data.observed_normalize,
                                       asinh_softening=data.asinh_softening)
-    ideal_norm = fit_normalization(ideal_raw[train_mask], data.ideal_normalize,
+    ideal_norm = fit_normalization(ideal_image[~val_mask], data.ideal_normalize,
                                    asinh_softening=data.asinh_softening)
 
-    observed = observed_norm.forward(observed_raw).astype(np.float32)
-    ideal = ideal_norm.forward(ideal_raw).astype(np.float32)
-
-    for name in ("train", "val"):
-        mask = splits == name
-        np.save(out_dir / f"{name}_observed.npy", observed[mask])
-        np.save(out_dir / f"{name}_ideal.npy", ideal[mask])
-        print(f"{name}: {int(mask.sum())} patches  "
-              f"observed{observed[mask].shape[1:]} ideal{ideal[mask].shape[1:]}")
+    np.save(out_dir / "observed.npy", observed_norm.forward(observed_image).astype(np.float32))
+    np.save(out_dir / "ideal.npy", ideal_norm.forward(ideal_image).astype(np.float32))
+    np.save(out_dir / "train_corners.npy", train_corners)
+    np.save(out_dir / "val_corners.npy", val_corners)
+    np.save(out_dir / "val_mask.npy", val_mask)
+    print(f"image {height}x{width}  val pixels {int(val_mask.sum())}/{val_mask.size}")
+    print(f"train: {len(train_corners)} windows  val: {len(val_corners)} windows  "
+          f"(patch {data.patch_size}, stride {data.stride})")
 
     (out_dir / "norm.json").write_text(json.dumps(
         {"observed": observed_norm.to_dict(), "ideal": ideal_norm.to_dict()}, indent=2))
-    with open(out_dir / "manifest.csv", "w", newline="") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["index", "corner_y", "corner_x", "block_y", "block_x", "split"])
-        for index, ((y, x), split) in enumerate(zip(corners, splits)):
-            block_y, block_x = block_of[(y, x)]
-            writer.writerow([index, y, x, block_y, block_x, split])
     dump_config(config, out_dir / "resolved_config.yaml")
     print(f"wrote dataset to {out_dir}")
 
