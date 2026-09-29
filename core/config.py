@@ -30,6 +30,7 @@ class DataConfig:
 class ModelConfig:
     name: str = "espcn"
     channels: int = 64
+    num_layers: int = 8  # deep_cnn only; its receptive-field radius equals num_layers
 
 
 @dataclass

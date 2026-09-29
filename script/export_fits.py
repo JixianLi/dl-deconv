@@ -22,7 +22,7 @@ from core.normalize import normalization_from_dict
 from core.runtime import resolve_device
 from dataset.gen_data import load_fits
 from dataset.patch_dataset import PatchDataset
-from model.espcn import build_model
+from model import build_model
 from script.eval import predict_full_image, predict_patches
 
 README = """\

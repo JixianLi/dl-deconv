@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader, RandomSampler
 from core.config import dump_config, load_config
 from core.runtime import psnr, resolve_device, set_seed
 from dataset.patch_dataset import PatchDataset
-from model.espcn import build_model
+from model import build_model
 
 LOSSES = {"l1": torch.nn.L1Loss, "mse": torch.nn.MSELoss}
 

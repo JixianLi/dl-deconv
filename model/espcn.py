@@ -4,7 +4,7 @@ The final conv produces `scale**2` channels per output channel and PixelShuffle
 reshuffles them into a `scale`x larger grid. At scale=1 — our observed->ideal
 deconvolution setup, where input and target are the same size — PixelShuffle is a
 no-op and the network reduces to three convolutions. This is a deliberately small
-phase-1 baseline to validate the pipeline; a deeper restoration net is future work.
+phase-1 baseline to validate the pipeline; model/deep_cnn.py is the deeper variant.
 """
 
 import torch.nn as nn
@@ -29,9 +29,3 @@ class ESPCN(nn.Module):
 
     def forward(self, x):
         return self.upsample(self.features(x))
-
-
-def build_model(model_config):
-    if model_config.name != "espcn":
-        raise ValueError(f"unknown model: {model_config.name}")
-    return ESPCN(channels=model_config.channels)

@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader
 from core.config import load_config
 from core.runtime import psnr, resolve_device, set_seed
 from dataset.patch_dataset import PatchDataset
-from model.espcn import build_model
+from model import build_model
 
 NUM_EXAMPLES = 6
 CMAP = "inferno"
