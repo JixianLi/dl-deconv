@@ -19,12 +19,29 @@ detected when its predicted aperture flux reaches it, and a true-zero pixel coun
 spurious when its prediction exceeds it, so completeness and false positives share one
 threshold. (F_pred > 0 alone is useless: the model's output floor is slightly positive.)
 
+Sources are binned twice: by true magnitude, and by per-source S/N = F_true / sigma_F(p),
+where sigma_F(p) is the Cramer-Rao bound on the flux error of a source at pixel p
+(crlb_flux_sigma.npy from dataset.estimate_psf: isolated source, known position,
+background + photon noise). It is the smallest error any unbiased estimator can reach.
+In the 1x1 aperture, per bin,
+
+  efficiency = mean(sigma_F^2) / (median(e)^2 + robust_scatter(e)^2),  e = F_pred - F_true,
+
+so 1 means the model's flux errors are as small as the bound allows. Caveats: the bound
+is for an isolated source, so in this crowded field the real bound is larger and the
+efficiency is conservative; the bound leaves out PSF-model mismatch, which dominates the
+residual on bright-star cores; and a biased estimator (one using priors, or predicting ~0
+for sources below the noise) can exceed 1, which happens below S/N ~1 and does not mean
+it measures those sources (the zero predictor does it too). The 3x3 aperture holds several
+sources, so it gets no efficiency.
+
 Two reference predictors (all zeros, and the train-region mean flux) are scored the same
 way so every number has a floor to beat.
 
+Needs noise.json and crlb_flux_sigma.npy in the dataset dir (run dataset.estimate_psf first).
 Writes into <run_dir>/eval/<dataset>/: photometry.csv (one row per predictor x aperture x
-magnitude bin), photometry_summary.json (whole-region flux totals and spurious flux),
-and three figures.
+binning x bin), photometry_summary.json (whole-region flux totals, spurious flux, noise),
+and four figures.
 """
 
 import argparse
@@ -46,6 +63,8 @@ from script.eval import predict_full_image
 
 APERTURE_SIZES = (1, 3)
 MAGNITUDE_BIN_WIDTH = 0.5
+SNR_BIN_WIDTH_DEX = 0.25
+SNR_REFERENCE_LEVELS = (3, 5)
 RECOVERED_WITHIN_MAG = 0.5
 ROBUST_SCATTER_FACTOR = 1.4826  # MAD -> Gaussian sigma
 DETECTION_LEVEL_PERCENTILE = 1.0  # of train-region source fluxes
@@ -79,9 +98,15 @@ def delta_magnitude(predicted_flux, true_flux):
     return -2.5 * np.log10(ratio)
 
 
-def binned_rows(predictor, aperture, true_magnitudes, dm, detected, bin_edges):
+def robust_scatter(values, center):
+    return ROBUST_SCATTER_FACTOR * float(np.median(np.abs(values - center)))
+
+
+def binned_rows(predictor, aperture, binning, bin_values, bin_edges, dm, detected, flux_error,
+                crlb_sigma):
+    """One row per non-empty bin; crlb_sigma (per source) is None where no efficiency applies."""
     rows = []
-    bin_index = np.digitize(true_magnitudes, bin_edges) - 1
+    bin_index = np.digitize(bin_values, bin_edges) - 1
     for index_bin in range(len(bin_edges) - 1):
         in_bin = bin_index == index_bin
         count = int(in_bin.sum())
@@ -90,14 +115,19 @@ def binned_rows(predictor, aperture, true_magnitudes, dm, detected, bin_edges):
         dm_bin = dm[in_bin]
         finite = dm_bin[np.isfinite(dm_bin)]
         median_dm = float(np.median(finite)) if finite.size else float("nan")
-        scatter = (ROBUST_SCATTER_FACTOR * float(np.median(np.abs(finite - median_dm)))
-                   if finite.size else float("nan"))
+        scatter = robust_scatter(finite, median_dm) if finite.size else float("nan")
         absolute = np.abs(np.nan_to_num(dm_bin, nan=np.inf))
+        error_bin = flux_error[in_bin]
+        median_error = float(np.median(error_bin))
+        scatter_error = robust_scatter(error_bin, median_error)
+        efficiency = (float("nan") if crlb_sigma is None
+                      else float(np.mean(crlb_sigma[in_bin] ** 2)) / (median_error ** 2 + scatter_error ** 2))
         rows.append({
             "predictor": predictor,
             "aperture": f"{aperture}x{aperture}",
-            "mag_low": float(bin_edges[index_bin]),
-            "mag_high": float(bin_edges[index_bin + 1]),
+            "binning": binning,
+            "bin_low": float(bin_edges[index_bin]),
+            "bin_high": float(bin_edges[index_bin + 1]),
             "num_sources": count,
             "median_dm": median_dm,
             "robust_scatter_dm": scatter,
@@ -105,6 +135,9 @@ def binned_rows(predictor, aperture, true_magnitudes, dm, detected, bin_edges):
             "frac_within_0.1": float((absolute < 0.1).mean()),
             "frac_within_0.2": float((absolute < 0.2).mean()),
             f"frac_within_{RECOVERED_WITHIN_MAG}": float((absolute < RECOVERED_WITHIN_MAG).mean()),
+            "median_flux_error": median_error,
+            "robust_scatter_flux_error": scatter_error,
+            "efficiency": efficiency,
         })
     return rows
 
@@ -143,6 +176,11 @@ def style_axes(ax):
     ax.tick_params(colors=TEXT_SECONDARY, labelsize=8)
 
 
+def select_rows(rows, predictor, aperture, binning):
+    return [row for row in rows if row["predictor"] == predictor
+            and row["aperture"] == f"{aperture}x{aperture}" and row["binning"] == binning]
+
+
 def plot_dm_vs_magnitude(true_magnitudes, dm_by_aperture, rows, out_path):
     figure, axes = plt.subplots(1, len(APERTURE_SIZES), figsize=(12, 4.5), sharey=True)
     for ax, aperture in zip(axes, APERTURE_SIZES):
@@ -151,9 +189,8 @@ def plot_dm_vs_magnitude(true_magnitudes, dm_by_aperture, rows, out_path):
         ax.hist2d(true_magnitudes[finite], np.clip(dm[finite], *DM_PLOT_RANGE), bins=(120, 130),
                   range=((true_magnitudes.min(), true_magnitudes.max()), DM_PLOT_RANGE),
                   cmap=SEQUENTIAL_BLUE, norm=LogNorm(), cmin=1)
-        model_rows = [row for row in rows
-                      if row["predictor"] == "model" and row["aperture"] == f"{aperture}x{aperture}"]
-        centers = np.array([(row["mag_low"] + row["mag_high"]) / 2 for row in model_rows])
+        model_rows = select_rows(rows, "model", aperture, "magnitude")
+        centers = np.array([(row["bin_low"] + row["bin_high"]) / 2 for row in model_rows])
         medians = np.array([row["median_dm"] for row in model_rows])
         scatters = np.array([row["robust_scatter_dm"] for row in model_rows])
         ax.axhline(0.0, color=REFERENCE_LINE_COLOR, linewidth=1)
@@ -184,9 +221,8 @@ def plot_completeness(rows, out_path):
         for index_column, (key, label) in enumerate(metrics):
             ax = axes[index_row, index_column]
             for predictor, color in PREDICTOR_COLORS.items():
-                series = [row for row in rows
-                          if row["predictor"] == predictor and row["aperture"] == f"{aperture}x{aperture}"]
-                centers = [(row["mag_low"] + row["mag_high"]) / 2 for row in series]
+                series = select_rows(rows, predictor, aperture, "magnitude")
+                centers = [(row["bin_low"] + row["bin_high"]) / 2 for row in series]
                 ax.plot(centers, [row[key] for row in series], color=color, linewidth=2,
                         marker="o", markersize=4, label=predictor)
             ax.set_title(f"{aperture}x{aperture}: {label}", fontsize=10)
@@ -203,6 +239,51 @@ def plot_completeness(rows, out_path):
     figure.savefig(out_path, dpi=150)
     plt.close(figure)
     print(f"wrote {out_path}")
+
+
+def plot_snr(rows, out_path):
+    """1x1 recovery and efficiency vs per-source S/N (bin centres in log10 S/N)."""
+    panels = ((f"frac_within_{RECOVERED_WITHIN_MAG}", f"fraction within {RECOVERED_WITHIN_MAG} mag", "linear", "top"),
+              ("efficiency", "efficiency  (Cramér–Rao σ_F² / flux MSE; 1 = at the bound)", "log", "bottom"))
+    figure, axes = plt.subplots(1, len(panels), figsize=(12, 4.5), sharex=True)
+    for ax, (key, label, y_scale, note_position) in zip(axes, panels):
+        for predictor, color in PREDICTOR_COLORS.items():
+            series = select_rows(rows, predictor, 1, "snr")
+            centers = [10 ** ((row["bin_low"] + row["bin_high"]) / 2) for row in series]
+            ax.plot(centers, [row[key] for row in series], color=color, linewidth=2,
+                    marker="o", markersize=4, label=predictor)
+        ax.set_xscale("log")
+        x_limits = ax.get_xlim()
+        ax.axvspan(x_limits[0], 1.0, color="#f0efec", zorder=0)
+        ax.set_xlim(x_limits)
+        ax.text(0.02, 0.97 if note_position == "top" else 0.03,
+                "below the noise (S/N < 1):\nefficiency > 1 here is not skill",
+                transform=ax.transAxes, fontsize=8, color=TEXT_SECONDARY, va=note_position)
+        for level in SNR_REFERENCE_LEVELS:
+            ax.axvline(level, color=REFERENCE_LINE_COLOR, linewidth=1, linestyle=":")
+        if key == "efficiency":
+            ax.axhline(1.0, color=REFERENCE_LINE_COLOR, linewidth=1)
+        ax.set_yscale(y_scale)
+        ax.set_title(f"1x1: {label}", fontsize=10)
+        ax.set_xlabel(f"per-source S/N = F_true / Cramér–Rao σ_F  (dotted: S/N {SNR_REFERENCE_LEVELS})",
+                      fontsize=9)
+        style_axes(ax)
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.legend(handles, labels, loc="upper right", bbox_to_anchor=(0.98, 1.0), ncol=len(labels),
+                  fontsize=9, frameon=False)
+    figure.suptitle("Recovery and efficiency vs S/N (val region)", fontsize=11, x=0.3)
+    figure.tight_layout(rect=(0, 0, 1, 0.93))
+    figure.savefig(out_path, dpi=150)
+    plt.close(figure)
+    print(f"wrote {out_path}")
+
+
+def load_noise(data_dir):
+    """(noise.json contents, per-pixel Cramer-Rao flux sigma map)."""
+    if not (data_dir / "crlb_flux_sigma.npy").exists():
+        raise FileNotFoundError(f"no crlb_flux_sigma.npy in {data_dir}; run dataset.estimate_psf first")
+    return (json.loads((data_dir / "noise.json").read_text()),
+            np.load(data_dir / "crlb_flux_sigma.npy").astype(np.float64))
 
 
 def plot_flux_scatter(true_flux, predicted_flux, out_path):
@@ -235,6 +316,7 @@ def main(run_dir, data_override=None):
         Path(data_override) / "resolved_config.yaml").data
     data_dir = Path(data.out_dir)
     ideal_norm = normalization_from_dict(json.loads((data_dir / "norm.json").read_text())["ideal"])
+    noise, crlb_map = load_noise(data_dir)
 
     truth = load_fits(data.ideal_fits).astype(np.float64)
     val_mask = np.load(data_dir / "val_mask.npy")
@@ -250,13 +332,24 @@ def main(run_dir, data_override=None):
 
     sources = val_mask & (truth > 0)
     true_magnitudes = magnitude(truth[sources])
-    bin_edges = np.arange(np.floor(true_magnitudes.min() / MAGNITUDE_BIN_WIDTH) * MAGNITUDE_BIN_WIDTH,
-                          true_magnitudes.max() + MAGNITUDE_BIN_WIDTH, MAGNITUDE_BIN_WIDTH)
+    crlb_sigma = crlb_map[sources]
+    log_snr = np.log10(truth[sources] / crlb_sigma)
+    binnings = {
+        "magnitude": (true_magnitudes, np.arange(
+            np.floor(true_magnitudes.min() / MAGNITUDE_BIN_WIDTH) * MAGNITUDE_BIN_WIDTH,
+            true_magnitudes.max() + MAGNITUDE_BIN_WIDTH, MAGNITUDE_BIN_WIDTH)),
+        "snr": (log_snr, np.arange(
+            np.floor(log_snr.min() / SNR_BIN_WIDTH_DEX) * SNR_BIN_WIDTH_DEX,
+            log_snr.max() + SNR_BIN_WIDTH_DEX, SNR_BIN_WIDTH_DEX)),
+    }
     bright = truth >= np.median(truth[sources])
     detection_level = float(np.percentile(truth[train_sources], DETECTION_LEVEL_PERCENTILE))
 
     rows = []
     summary = {"num_val_sources": int(sources.sum()), "detection_level_flux": detection_level,
+               "noise": noise, "median_crlb_flux_sigma": float(np.median(crlb_sigma)),
+               **{f"frac_val_sources_snr_above_{level}": float((log_snr >= np.log10(level)).mean())
+                  for level in SNR_REFERENCE_LEVELS},
                "predictors": {}}
     model_dm_by_aperture = {}
     true_boxes = {aperture: box_sum(truth, aperture) for aperture in APERTURE_SIZES}
@@ -265,7 +358,10 @@ def main(run_dir, data_override=None):
             predicted_box = box_sum(predicted, aperture)[sources]
             dm = delta_magnitude(predicted_box, true_boxes[aperture][sources])
             detected = predicted_box >= detection_level
-            rows.extend(binned_rows(predictor, aperture, true_magnitudes, dm, detected, bin_edges))
+            flux_error = predicted_box - true_boxes[aperture][sources]
+            for binning, (bin_values, bin_edges) in binnings.items():
+                rows.extend(binned_rows(predictor, aperture, binning, bin_values, bin_edges, dm,
+                                        detected, flux_error, crlb_sigma if aperture == 1 else None))
             if predictor == "model":
                 model_dm_by_aperture[aperture] = dm
         summary["predictors"][predictor] = flux_summary(predicted, truth, val_mask, sources,
@@ -284,6 +380,7 @@ def main(run_dir, data_override=None):
     plot_dm_vs_magnitude(true_magnitudes, model_dm_by_aperture, rows, eval_dir / "photometry_dm.png")
     plot_completeness(rows, eval_dir / "photometry_completeness.png")
     plot_flux_scatter(truth[sources], model_flux[sources], eval_dir / "photometry_flux.png")
+    plot_snr(rows, eval_dir / "photometry_snr.png")
 
 
 if __name__ == "__main__":
