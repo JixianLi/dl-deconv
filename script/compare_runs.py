@@ -60,12 +60,13 @@ def print_tables(runs):
           f"{first_summary['predictors']['model']['num_faint_region_blocks']} blocks)")
 
     print(f"\n{'run':<{name_width}}  {'regime':<14}  {'sources':>8}  "
-          f"{f'within {RECOVERED_WITHIN_MAG} mag':>15}  {'median F error':>14}  {'efficiency':>10}")
+          f"{f'within {RECOVERED_WITHIN_MAG} mag':>15}  {'median F error':>14}  {'plain eff':>10}  "
+          f"{'robust eff':>10}")
     for name, (rows, _) in runs.items():
         for row in rows_for(rows, "snr_coarse"):
             print(f"{name:<{name_width}}  {regime_label(row):<14}  {int(row['num_sources']):8d}  "
                   f"{row[RECOVERED_KEY]:15.3f}  {row['median_flux_error']:14.5f}  "
-                  f"{row['efficiency']:10.3f}")
+                  f"{row['plain_efficiency']:10.3g}  {row['robust_efficiency']:10.3g}")
 
 
 def label_line_ends(figure, ax, line_ends):
@@ -87,7 +88,8 @@ def label_line_ends(figure, ax, line_ends):
 
 def plot_snr(runs, out_path):
     panels = ((RECOVERED_KEY, f"fraction within {RECOVERED_WITHIN_MAG} mag", "linear"),
-              ("efficiency", "efficiency  (Cramér–Rao σ_F² / flux MSE; 1 = at the bound)", "log"))
+              ("robust_efficiency", "robust efficiency  (Cramér–Rao σ_F² / robust flux error²; 1 = at the bound)",
+               "log"))
     figure, axes = plt.subplots(1, len(panels), figsize=(12, 4.5), sharex=True)
     for ax, (key, label, y_scale) in zip(axes, panels):
         line_ends = []
@@ -104,7 +106,7 @@ def plot_snr(runs, out_path):
         ax.set_xlim(x_limits[0], x_limits[1] * 3)  # room for the end labels
         for level in SNR_REFERENCE_LEVELS:
             ax.axvline(level, color=REFERENCE_LINE_COLOR, linewidth=1, linestyle=":")
-        if key == "efficiency":
+        if key == "robust_efficiency":
             ax.axhline(1.0, color=REFERENCE_LINE_COLOR, linewidth=1)
         label_line_ends(figure, ax, line_ends)
         ax.set_title(f"1x1: {label}", fontsize=10)

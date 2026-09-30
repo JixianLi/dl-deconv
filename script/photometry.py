@@ -27,15 +27,19 @@ S/N is binned twice too: 0.25 dex wide ("snr") and into the regimes 0.3-1, 1-3, 
 ("snr_coarse"), whose per-source medians compare_runs tabulates.
 In the 1x1 aperture, per bin,
 
-  efficiency = mean(sigma_F^2) / (median(e)^2 + robust_scatter(e)^2),  e = F_pred - F_true,
+  plain_efficiency  = mean(sigma_F^2) / mean(e^2),                          e = F_pred - F_true,
+  robust_efficiency = mean(sigma_F^2) / (median(e)^2 + robust_scatter(e)^2),
 
-so 1 means the model's flux errors are as small as the bound allows. Caveats: the bound
-is for an isolated source, so in this crowded field the real bound is larger and the
-efficiency is conservative; the bound leaves out PSF-model mismatch, which dominates the
-residual on bright-star cores; and a biased estimator (one using priors, or predicting ~0
-for sources below the noise) can exceed 1, which happens below S/N ~1 and does not mean
-it measures those sources (the zero predictor does it too). The 3x3 aperture holds several
-sources, so it gets no efficiency.
+so 1 means the model's flux errors are as small as the bound allows. The robust form
+ignores the error tails, so with heavy-tailed errors it can overstate skill several-fold;
+the plain form counts every error and a few large misses (bright-star cores) can drive it
+to ~0. Report both. Caveats on either: the bound is for an isolated source, so in this
+crowded field the real bound is larger and the efficiency is conservative; the bound
+leaves out PSF-model mismatch, which dominates the residual on bright-star cores; and a
+biased estimator (one using priors, or predicting ~0 for sources below the noise) can
+exceed 1, which happens below S/N ~1 and does not mean it measures those sources (the
+zero predictor does it too). The 3x3 aperture holds several
+sources, so it gets neither efficiency.
 
 Per-source scores cannot show flux that is restored on average but spread over the wrong
 pixels, so faint flux is also scored in aggregate. The faint region is the val pixels
@@ -134,8 +138,12 @@ def binned_rows(predictor, aperture, binning, bin_values, bin_edges, dm, detecte
         error_bin = flux_error[in_bin]
         median_error = float(np.median(error_bin))
         scatter_error = robust_scatter(error_bin, median_error)
-        efficiency = (float("nan") if crlb_sigma is None
-                      else float(np.mean(crlb_sigma[in_bin] ** 2)) / (median_error ** 2 + scatter_error ** 2))
+        if crlb_sigma is None:
+            plain_efficiency = robust_efficiency = float("nan")
+        else:
+            bound_variance = float(np.mean(crlb_sigma[in_bin] ** 2))
+            plain_efficiency = bound_variance / float(np.mean(error_bin ** 2))
+            robust_efficiency = bound_variance / (median_error ** 2 + scatter_error ** 2)
         rows.append({
             "predictor": predictor,
             "aperture": f"{aperture}x{aperture}",
@@ -151,7 +159,8 @@ def binned_rows(predictor, aperture, binning, bin_values, bin_edges, dm, detecte
             f"frac_within_{RECOVERED_WITHIN_MAG}": float((absolute < RECOVERED_WITHIN_MAG).mean()),
             "median_flux_error": median_error,
             "robust_scatter_flux_error": scatter_error,
-            "efficiency": efficiency,
+            "plain_efficiency": plain_efficiency,
+            "robust_efficiency": robust_efficiency,
         })
     return rows
 
@@ -288,7 +297,8 @@ def plot_completeness(rows, out_path):
 def plot_snr(rows, out_path):
     """1x1 recovery and efficiency vs per-source S/N (bin centres in log10 S/N)."""
     panels = ((f"frac_within_{RECOVERED_WITHIN_MAG}", f"fraction within {RECOVERED_WITHIN_MAG} mag", "linear", "top"),
-              ("efficiency", "efficiency  (Cramér–Rao σ_F² / flux MSE; 1 = at the bound)", "log", "bottom"))
+              ("robust_efficiency", "robust efficiency  (Cramér–Rao σ_F² / robust flux error²; 1 = at the bound)",
+               "log", "bottom"))
     figure, axes = plt.subplots(1, len(panels), figsize=(12, 4.5), sharex=True)
     for ax, (key, label, y_scale, note_position) in zip(axes, panels):
         for predictor, color in PREDICTOR_COLORS.items():
@@ -305,7 +315,7 @@ def plot_snr(rows, out_path):
                 transform=ax.transAxes, fontsize=8, color=TEXT_SECONDARY, va=note_position)
         for level in SNR_REFERENCE_LEVELS:
             ax.axvline(level, color=REFERENCE_LINE_COLOR, linewidth=1, linestyle=":")
-        if key == "efficiency":
+        if key == "robust_efficiency":
             ax.axhline(1.0, color=REFERENCE_LINE_COLOR, linewidth=1)
         ax.set_yscale(y_scale)
         ax.set_title(f"1x1: {label}", fontsize=10)
