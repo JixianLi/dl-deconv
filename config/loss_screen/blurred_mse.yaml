@@ -1,0 +1,27 @@
+seed: 42
+
+data:
+  observed_fits: storage/M31/m31bH100_trim.fits
+  ideal_fits: storage/M31/m31bH100.fits
+  out_dir: storage/patches/baseline
+  patch_size: 64
+  stride: 1            # every window; PatchDataset crops them lazily from the full image
+  observed_normalize: asinh   # asinh | log | linear
+  ideal_normalize: asinh      # sparse point-source field; asinh keeps faint-source dynamic range
+  asinh_softening: 3.0
+  split_block_size: 505  # 4040 / 505 = 8 blocks per axis -> 64 blocks
+  val_fraction: 0.2
+
+model:
+  name: espcn
+  channels: 64
+
+train:
+  out_dir: storage/runs/loss_screen/blurred_mse
+  iterations: 150000
+  batch_size: 64
+  lr: 1.0e-3
+  loss: blurred_mse
+  val_interval: 3000
+  num_workers: 8
+  device: auto
