@@ -9,7 +9,7 @@ import torch.nn as nn
 
 
 class DeepCNN(nn.Module):
-    def __init__(self, num_layers=8, channels=64, in_channels=1):
+    def __init__(self, num_layers=8, channels=64, in_channels=1, out_channels=1):
         super().__init__()
         if num_layers < 2:
             raise ValueError(f"num_layers must be >= 2, got {num_layers}")
@@ -17,7 +17,7 @@ class DeepCNN(nn.Module):
         layers = [nn.Conv2d(in_channels, channels, kernel_size=3, padding=1), nn.ReLU(inplace=True)]
         for _ in range(num_layers - 2):
             layers += [nn.Conv2d(channels, channels, kernel_size=3, padding=1), nn.ReLU(inplace=True)]
-        layers.append(nn.Conv2d(channels, in_channels, kernel_size=3, padding=1))
+        layers.append(nn.Conv2d(channels, out_channels, kernel_size=3, padding=1))
         self.layers = nn.Sequential(*layers)
 
     def forward(self, x):

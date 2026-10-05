@@ -13,7 +13,7 @@ import torch.nn as nn
 class ESPCN(nn.Module):
     receptive_field_radius = 4  # 5x5 + 3x3 + 3x3 convs: 2 + 1 + 1 px
 
-    def __init__(self, scale=1, channels=64, in_channels=1):
+    def __init__(self, scale=1, channels=64, in_channels=1, out_channels=1):
         super().__init__()
         mid = channels // 2
         self.features = nn.Sequential(
@@ -23,7 +23,7 @@ class ESPCN(nn.Module):
             nn.ReLU(inplace=True),
         )
         self.upsample = nn.Sequential(
-            nn.Conv2d(mid, in_channels * scale * scale, kernel_size=3, padding=1),
+            nn.Conv2d(mid, out_channels * scale * scale, kernel_size=3, padding=1),
             nn.PixelShuffle(scale),
         )
 

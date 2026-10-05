@@ -18,6 +18,7 @@ import torch
 from astropy.io import fits
 
 from core.config import load_config
+from core.losses import load_loss
 from core.normalize import normalization_from_dict
 from core.runtime import resolve_device
 from dataset.gen_data import load_fits
@@ -66,11 +67,12 @@ def main(run_dir, data_override=None):
         Path(data_override) / "resolved_config.yaml").data
     device = resolve_device(config.train.device)
 
-    model = build_model(config.model).to(device)
+    data_dir = Path(data.out_dir)
+    loss = load_loss(config.train.loss, data_dir)
+    model = build_model(config.model, loss.num_output_channels).to(device)
     model.load_state_dict(checkpoint["model_state"])
     model.eval()
 
-    data_dir = Path(data.out_dir)
     norms = json.loads((data_dir / "norm.json").read_text())
     observed_norm = normalization_from_dict(norms["observed"])
     ideal_norm = normalization_from_dict(norms["ideal"])
@@ -81,7 +83,7 @@ def main(run_dir, data_override=None):
     write_fits(result_dir / "target.fits", load_fits(data.ideal_fits))
     observed_full = np.load(data_dir / "observed.npy")
     write_fits(result_dir / "prediction.fits",
-               ideal_norm.inverse(predict_full_image(model, observed_full, device)))
+               ideal_norm.inverse(predict_full_image(model, loss.to_normalized_ideal, observed_full, device)))
 
     counts = {}
     for split, folder in (("train", "training"), ("val", "validation")):
@@ -89,7 +91,7 @@ def main(run_dir, data_override=None):
         dataset = PatchDataset(data_dir, split, stride=data.patch_size)
         observed = np.stack([dataset[index][0].numpy() for index in range(len(dataset))])
         ideal = np.stack([dataset[index][1].numpy() for index in range(len(dataset))])
-        predictions = predict_patches(model, observed, device)
+        predictions = predict_patches(model, loss.to_normalized_ideal, observed, device)
         triplets = zip(dataset.corners, observed_norm.inverse(observed), ideal_norm.inverse(ideal),
                        ideal_norm.inverse(predictions))
         for (y, x), obs, tgt, pred in triplets:

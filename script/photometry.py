@@ -68,6 +68,7 @@ import torch
 from matplotlib.colors import LinearSegmentedColormap, LogNorm
 
 from core.config import load_config
+from core.losses import load_loss
 from core.normalize import normalization_from_dict
 from core.runtime import resolve_device
 from dataset.gen_data import load_fits
@@ -209,14 +210,17 @@ def faint_region_summary(predicted, truth, faint_region):
     }
 
 
-def load_model(run_dir):
+def load_model(run_dir, data_dir=None):
+    """(model, its map to the normalized ideal, config, device). The map uses the
+    normalization of data_dir, by default the run's own dataset."""
     checkpoint = torch.load(run_dir / "checkpoint.pt", weights_only=False)
     config = checkpoint["config"]
     device = resolve_device(config.train.device)
-    model = build_model(config.model).to(device)
+    loss = load_loss(config.train.loss, data_dir or config.data.out_dir)
+    model = build_model(config.model, loss.num_output_channels).to(device)
     model.load_state_dict(checkpoint["model_state"])
     model.eval()
-    return model, config, device
+    return model, loss.to_normalized_ideal, config, device
 
 
 def style_axes(ax):
@@ -365,7 +369,7 @@ def plot_flux_scatter(true_flux, predicted_flux, out_path):
 
 def main(run_dir, data_override=None):
     run_dir = Path(run_dir)
-    model, config, device = load_model(run_dir)
+    model, to_normalized_ideal, config, device = load_model(run_dir, data_override)
     data = config.data if data_override is None else load_config(
         Path(data_override) / "resolved_config.yaml").data
     data_dir = Path(data.out_dir)
@@ -375,7 +379,8 @@ def main(run_dir, data_override=None):
     truth = load_fits(data.ideal_fits).astype(np.float64)
     val_mask = np.load(data_dir / "val_mask.npy")
     observed = np.load(data_dir / "observed.npy")
-    model_flux = ideal_norm.inverse(predict_full_image(model, observed, device).astype(np.float64))
+    model_flux = ideal_norm.inverse(
+        predict_full_image(model, to_normalized_ideal, observed, device).astype(np.float64))
 
     train_sources = ~val_mask & (truth > 0)
     predictors = {

@@ -15,11 +15,10 @@ import torch
 from torch.utils.data import DataLoader, RandomSampler
 
 from core.config import dump_config, load_config
+from core.losses import load_loss
 from core.runtime import psnr, resolve_device, set_seed
 from dataset.patch_dataset import PatchDataset
 from model import build_model
-
-LOSSES = {"l1": torch.nn.L1Loss, "mse": torch.nn.MSELoss}
 
 
 def evaluate(model, loader, loss_fn, device):
@@ -30,10 +29,10 @@ def evaluate(model, loader, loss_fn, device):
     with torch.no_grad():
         for observed, ideal in loader:
             observed, ideal = observed.to(device), ideal.to(device)
-            prediction = model(observed)
+            raw_output = model(observed)
             batch = observed.size(0)
-            total_loss += loss_fn(prediction, ideal).item() * batch
-            total_psnr += psnr(prediction, ideal) * batch
+            total_loss += loss_fn(raw_output, ideal).item() * batch
+            total_psnr += psnr(loss_fn.to_normalized_ideal(raw_output), ideal) * batch
             count += batch
     return total_loss / count, total_psnr / count
 
@@ -57,8 +56,8 @@ def main(config_path):
     val_loader = DataLoader(val_set, batch_size=train_config.batch_size, shuffle=False,
                             num_workers=train_config.num_workers)
 
-    model = build_model(config.model).to(device)
-    loss_fn = LOSSES[train_config.loss]()
+    loss_fn = load_loss(train_config.loss, config.data.out_dir)
+    model = build_model(config.model, loss_fn.num_output_channels).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=train_config.lr)
 
     print(f"device={device}  train={len(train_set)}  val={len(val_set)}  "

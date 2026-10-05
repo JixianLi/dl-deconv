@@ -18,6 +18,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from core.config import load_config
+from core.losses import load_loss
 from core.runtime import psnr, resolve_device, set_seed
 from dataset.patch_dataset import PatchDataset
 from model import build_model
@@ -27,7 +28,7 @@ CMAP = "inferno"
 FULL_IMAGE_TILE_SIZE = 512
 
 
-def score(model, dataset, device):
+def score(model, to_normalized_ideal, dataset, device):
     loader = DataLoader(dataset, batch_size=128, shuffle=False)
     loss_fn = torch.nn.L1Loss()
     total_loss = 0.0
@@ -35,13 +36,13 @@ def score(model, dataset, device):
     with torch.no_grad():
         for observed, ideal in loader:
             observed, ideal = observed.to(device), ideal.to(device)
-            prediction = model(observed)
+            prediction = to_normalized_ideal(model(observed))
             total_loss += loss_fn(prediction, ideal).item() * observed.size(0)
             total_psnr += psnr(prediction, ideal) * observed.size(0)
     return total_loss / len(dataset), total_psnr / len(dataset)
 
 
-def visualize(model, dataset, device, indices, out_path):
+def visualize(model, to_normalized_ideal, dataset, device, indices, out_path):
     rows = len(indices)
     fig, axes = plt.subplots(rows, 3, figsize=(7, 2.3 * rows))
     axes = np.atleast_2d(axes)
@@ -49,7 +50,7 @@ def visualize(model, dataset, device, indices, out_path):
     for row, index in enumerate(indices):
         observed, ideal = dataset[index]
         with torch.no_grad():
-            prediction = model(observed.unsqueeze(0).to(device)).squeeze(0).cpu()
+            prediction = to_normalized_ideal(model(observed.unsqueeze(0).to(device))).squeeze(0).cpu()
         sample_psnr = psnr(prediction, ideal)
         for col, image in enumerate((observed, ideal, prediction)):
             ax = axes[row, col]
@@ -66,17 +67,18 @@ def visualize(model, dataset, device, indices, out_path):
     print(f"wrote {out_path}")
 
 
-def predict_patches(model, observed, device, batch_size=256):
+def predict_patches(model, to_normalized_ideal, observed, device, batch_size=256):
     outputs = []
     with torch.no_grad():
         for start in range(0, len(observed), batch_size):
             chunk = torch.from_numpy(observed[start:start + batch_size]).to(device)
-            outputs.append(model(chunk).cpu().numpy())
+            outputs.append(to_normalized_ideal(model(chunk)).cpu().numpy())
     return np.concatenate(outputs)
 
 
-def predict_full_image(model, observed, device, tile_size=FULL_IMAGE_TILE_SIZE):
-    """Model output over the whole (H, W) image, identical to a single forward pass.
+def predict_full_image(model, to_normalized_ideal, observed, device, tile_size=FULL_IMAGE_TILE_SIZE):
+    """Normalized-ideal prediction over the whole (H, W) image, identical to a single forward
+    pass (to_normalized_ideal acts per pixel, so it does not affect the tiling).
 
     One pass at 4040x4040 would need ~4 GB of activations, so we run tiles. Each tile's
     input is extended by the receptive-field radius (a halo) on every side that is not an
@@ -94,16 +96,17 @@ def predict_full_image(model, observed, device, tile_size=FULL_IMAGE_TILE_SIZE):
                 in_y0, in_x0 = max(y0 - halo, 0), max(x0 - halo, 0)
                 in_y1, in_x1 = min(y1 + halo, height), min(x1 + halo, width)
                 tile = np.ascontiguousarray(observed[in_y0:in_y1, in_x0:in_x1], dtype=np.float32)
-                output = model(torch.from_numpy(tile)[None, None].to(device))[0, 0].cpu().numpy()
+                output = to_normalized_ideal(model(torch.from_numpy(tile)[None, None].to(device)))
+                output = output[0, 0].cpu().numpy()
                 prediction[y0:y1, x0:x1] = output[y0 - in_y0:y1 - in_y0, x0 - in_x0:x1 - in_x0]
     return prediction
 
 
-def visualize_full(model, data, device, out_path):
+def visualize_full(model, to_normalized_ideal, data, device, out_path):
     data_dir = Path(data.out_dir)
     observed_full = np.load(data_dir / "observed.npy")
     ideal_full = np.load(data_dir / "ideal.npy")
-    predicted_full = predict_full_image(model, observed_full, device)
+    predicted_full = predict_full_image(model, to_normalized_ideal, observed_full, device)
 
     mse = float(np.mean((predicted_full - ideal_full) ** 2))
     full_psnr = float("inf") if mse == 0.0 else 10.0 * math.log10(1.0 / mse)
@@ -142,7 +145,8 @@ def main(run_dir, data_override=None):
     set_seed(config.seed)
     device = resolve_device(config.train.device)
 
-    model = build_model(config.model).to(device)
+    loss = load_loss(config.train.loss, data.out_dir)
+    model = build_model(config.model, loss.num_output_channels).to(device)
     model.load_state_dict(checkpoint["model_state"])
     model.eval()
 
@@ -151,12 +155,13 @@ def main(run_dir, data_override=None):
     rng = np.random.default_rng(config.seed)
     for split in ("train", "val"):
         dataset = PatchDataset(data.out_dir, split, stride=data.patch_size)
-        loss, mean_psnr = score(model, dataset, device)
-        print(f"{split}: n={len(dataset)}  l1={loss:.5f}  psnr={mean_psnr:.3f}")
+        l1, mean_psnr = score(model, loss.to_normalized_ideal, dataset, device)
+        print(f"{split}: n={len(dataset)}  l1={l1:.5f}  psnr={mean_psnr:.3f}")
         indices = rng.choice(len(dataset), size=min(NUM_EXAMPLES, len(dataset)), replace=False)
-        visualize(model, dataset, device, indices, eval_dir / f"{split}_examples.png")
+        visualize(model, loss.to_normalized_ideal, dataset, device, indices,
+                  eval_dir / f"{split}_examples.png")
 
-    visualize_full(model, data, device, eval_dir / "full_comparison.png")
+    visualize_full(model, loss.to_normalized_ideal, data, device, eval_dir / "full_comparison.png")
 
 
 if __name__ == "__main__":
