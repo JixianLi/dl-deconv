@@ -43,7 +43,7 @@ sources, so it gets neither efficiency.
 
 Per-source scores cannot show flux that is restored on average but spread over the wrong
 pixels, so faint flux is also scored in aggregate. The faint region is the val pixels
-outside an 11x11 box around every true source (train or val) with S/N >= 3; there the
+outside a 5x5 box around every true source (train or val) with S/N >= 3; there the
 truth is faint sources only. faint_region_flux_ratio is predicted / true flux summed over
 it, and its spread over space comes from the same ratio in 32x32 blocks (median and
 16th/84th percentiles, over blocks at least a quarter covered by the faint region).
@@ -84,7 +84,7 @@ RECOVERED_WITHIN_MAG = 0.5
 ROBUST_SCATTER_FACTOR = 1.4826  # MAD -> Gaussian sigma
 DETECTION_LEVEL_PERCENTILE = 1.0  # of train-region source fluxes
 DM_PLOT_RANGE = (-4.0, 9.0)
-FAINT_REGION_EXCLUSION_BOX = 11  # px, centred on each S/N >= FAINT_REGION_SNR source
+FAINT_REGION_EXCLUSION_BOX = 5  # px, centred on each S/N >= FAINT_REGION_SNR source
 FAINT_REGION_SNR = 3
 FAINT_REGION_BLOCK_SIZE = 32
 FAINT_REGION_MIN_BLOCK_COVERAGE = 0.25
