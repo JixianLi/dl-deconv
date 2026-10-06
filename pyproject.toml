@@ -1,7 +1,7 @@
 [project]
 name = "dl-deconv"
 version = "0.1.0"
-description = "Deep learning methods for super-sampling astronomical images"
+description = "Deep learning experiments for deconvolving astronomical images"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
