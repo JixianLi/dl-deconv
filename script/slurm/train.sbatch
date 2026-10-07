@@ -12,6 +12,8 @@
 #SBATCH -n 1
 #SBATCH -t 04:00:00
 #SBATCH -o %x-%j.out
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=jixianli@tacc.utexas.edu
 
 set -euo pipefail
 
