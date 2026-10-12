@@ -153,6 +153,7 @@ def row_y_limits(metrics_by_run, key):
         late = metrics["iteration"] >= Y_RANGE_FROM_ITERATION
         values.append(metrics[key][late] if late.any() else metrics[key])
     values = np.concatenate(values)
+    values = values[np.isfinite(values)]  # a diverged run can overflow to ±inf
     low, high = float(values.min()), float(values.max())
     pad = 0.05 * (high - low or abs(high) or 1.0)
     return low - pad, high + pad
