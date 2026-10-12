@@ -2,10 +2,11 @@
 
 `train.sbatch` trains one config on a Grace Hopper node (`gh` queue, 1 GPU per node,
 whole node allocated), then runs `script.eval` and `script.photometry` on the run. The
-run folder follows the layout in `core/run_layout.py`. `submit_loss_screen.sh` submits
+run folder follows the layout in `core/run_layout.py`; the job's log ends up in its
+`log/` folder. `submit_loss_screen.sh` submits
 one job per config in `config/loss_screen/`.
 
-Setup, done once by hand (the scripts create nothing):
+Setup, done once by hand (the scripts set none of it up):
 
 - the repo is checked out on Vista and uv is on PATH;
 - `storage/` in the repo resolves to the data dir, e.g. `ln -s $SCRATCH/dl-deconv storage`,

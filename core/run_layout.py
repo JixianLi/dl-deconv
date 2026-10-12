@@ -9,9 +9,10 @@
     evaluation/                eval and photometry on the run's own dataset
     evaluation/export/         physical-flux FITS, only if script.export_fits ran
     evaluation-<dataset>/      the same for another dataset, via --data
+    log/                       the SLURM log, moved here by script/slurm/train.sbatch
 
-Every script that reads or writes a run goes through these functions, so a rename
-happens here once.
+Every Python script that reads or writes a run goes through these functions, so a
+rename happens here once; train.sbatch hard-codes log/.
 """
 
 from pathlib import Path

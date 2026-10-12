@@ -3,10 +3,12 @@
 #
 #   sbatch -J <name> script/slurm/train.sbatch config/loss_screen/<name>.yaml
 #
-# Submit from the repo root; the log goes to <job name>-<job id>.out there. If your login
-# has several projects, export SBATCH_ACCOUNT=<project> first (sbatch reads it as -A).
-# Creates nothing and sets up no environment: it expects uv on PATH and storage/ to
-# resolve to the data dir (e.g. a symlink to $SCRATCH/dl-deconv), and fails fast otherwise.
+# Submit from the repo root. The log is written to <job name>-<job id>.out there and moved
+# into <run_dir>/log/ when the job ends, whether it succeeded or failed; a job that fails
+# before its config is read leaves the log in the repo root. If your login has several
+# projects, export SBATCH_ACCOUNT=<project> first (sbatch reads it as -A).
+# Sets up no environment: it expects uv on PATH and storage/ to resolve to the data dir
+# (e.g. a symlink to $SCRATCH/dl-deconv), and fails fast otherwise.
 #SBATCH -p gh
 #SBATCH -N 1
 #SBATCH -n 1
@@ -49,6 +51,13 @@ if missing:
 print(config.train.out_dir)
 EOF
 ) || fail "data check failed for $config"
+
+# Renaming keeps SLURM's open handle on the log valid, so lines written after this script
+# exits still land in the moved file, as long as the repo and storage/ share a filesystem.
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    slurm_log=$(scontrol show job "$SLURM_JOB_ID" | sed -n 's/^ *StdOut=//p')
+    trap 'mkdir -p "$run_dir/log" && mv "$slurm_log" "$run_dir/log/"' EXIT
+fi
 
 uv run --no-sync python -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)" \
     || fail "torch sees no CUDA device; refusing to train on CPU"
