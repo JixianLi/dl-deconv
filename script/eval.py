@@ -138,7 +138,7 @@ def visualize_full(model, to_normalized_ideal, data, device, out_path):
 
 def main(run_dir, data_override=None):
     run_dir = Path(run_dir)
-    checkpoint = torch.load(checkpoint_path(run_dir), weights_only=False)
+    checkpoint = torch.load(checkpoint_path(run_dir), weights_only=False, map_location="cpu")
     config = checkpoint["config"]
     # Model comes from the checkpoint; the data spec can be a different dataset (e.g. another
     # band) via --data, so we can test how the trained weights transfer cross-domain.

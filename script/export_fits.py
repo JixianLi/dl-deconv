@@ -63,7 +63,7 @@ def write_fits(path, image):
 
 def main(run_dir, data_override=None):
     run_dir = Path(run_dir)
-    checkpoint = torch.load(checkpoint_path(run_dir), weights_only=False)
+    checkpoint = torch.load(checkpoint_path(run_dir), weights_only=False, map_location="cpu")
     config = checkpoint["config"]
     data = config.data if data_override is None else load_config(
         Path(data_override) / "resolved_config.yaml").data

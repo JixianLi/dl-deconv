@@ -214,7 +214,7 @@ def faint_region_summary(predicted, truth, faint_region):
 def load_model(run_dir, data_dir=None):
     """(model, its map to the normalized ideal, config, device). The map uses the
     normalization of data_dir, by default the run's own dataset."""
-    checkpoint = torch.load(checkpoint_path(run_dir), weights_only=False)
+    checkpoint = torch.load(checkpoint_path(run_dir), weights_only=False, map_location="cpu")
     config = checkpoint["config"]
     device = resolve_device(config.train.device)
     loss = load_loss(config.train.loss, data_dir or config.data.out_dir)
