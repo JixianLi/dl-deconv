@@ -1,4 +1,4 @@
-seed: 42
+seed: 46
 
 data:
   observed_fits: storage/M31/m31bH100_trim.fits
@@ -17,11 +17,11 @@ model:
   channels: 64
 
 train:
-  out_dir: storage/runs/loss_screen/flux_mse
+  out_dir: storage/runs/loss_screen/beta_nll_seed46
   iterations: 150000
   batch_size: 64
   lr: 1.0e-3
-  loss: flux_mse
+  loss: beta_nll
   val_interval: 3000
   num_workers: 8
   device: auto
