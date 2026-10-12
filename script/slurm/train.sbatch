@@ -9,10 +9,14 @@
 # projects, export SBATCH_ACCOUNT=<project> first (sbatch reads it as -A).
 # Sets up no environment: it expects uv on PATH and storage/ to resolve to the data dir
 # (e.g. a symlink to $SCRATCH/dl-deconv), and fails fast otherwise.
-#SBATCH -p gh
+#
+# The defaults fit the ESPCN screen, whose runs finish in about 8 minutes: 2 hours on
+# whichever of gh and gh-dev starts the job first. For a bigger model, override on the
+# command line, e.g. sbatch -p gh -t 04:00:00 ...
+#SBATCH -p gh,gh-dev
 #SBATCH -N 1
 #SBATCH -n 1
-#SBATCH -t 04:00:00
+#SBATCH -t 02:00:00
 #SBATCH -o %x-%j.out
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=jixianli@tacc.utexas.edu
