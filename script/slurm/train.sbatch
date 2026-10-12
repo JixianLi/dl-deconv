@@ -57,4 +57,3 @@ echo "config=$config run_dir=$run_dir host=$(hostname) job=${SLURM_JOB_ID:-none}
 uv run --no-sync python -m script.train "$config"
 uv run --no-sync python -m script.eval "$run_dir"
 uv run --no-sync python -m script.photometry "$run_dir"
-uv run --no-sync python -m script.plot_loss "$run_dir"

@@ -1,9 +1,9 @@
 # Running on TACC Vista
 
 `train.sbatch` trains one config on a Grace Hopper node (`gh` queue, 1 GPU per node,
-whole node allocated), then runs `script.eval`, `script.photometry` and
-`script.plot_loss` on the run. `submit_loss_screen.sh` submits one job per config in
-`config/loss_screen/`.
+whole node allocated), then runs `script.eval` and `script.photometry` on the run. The
+run folder follows the layout in `core/run_layout.py`. `submit_loss_screen.sh` submits
+one job per config in `config/loss_screen/`.
 
 Setup, done once by hand (the scripts create nothing):
 
