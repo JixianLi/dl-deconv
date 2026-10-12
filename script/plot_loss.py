@@ -2,7 +2,8 @@
 
   uv run python -m script.plot_loss storage/runs/mse
 
-Reads <run_dir>/metrics.csv and writes <run_dir>/figures/loss_curve_log.png. Each train
+Reads <run_dir>/training/metrics.csv and writes <run_dir>/loss_curve/loss_log.png.
+script.train calls this at the end of every run; run it by hand only to redraw. Each train
 point is the mean loss over the preceding val_interval iterations; each val point is
 measured at the end of that interval.
 """
@@ -13,14 +14,15 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+from core.run_layout import loss_curve_path, metrics_path
 from script.photometry import style_axes
 
 SERIES = (("train_loss", "train", "#2a78d6"), ("val_loss", "val", "#eb6834"))
 
 
-def main(run_dir):
+def plot_loss_curve(run_dir):
     run_dir = Path(run_dir)
-    with open(run_dir / "metrics.csv", newline="") as handle:
+    with open(metrics_path(run_dir), newline="") as handle:
         rows = list(csv.DictReader(handle))
     iterations = [int(row["iteration"]) for row in rows]
     figure, ax = plt.subplots(figsize=(8, 4.5))
@@ -36,7 +38,7 @@ def main(run_dir):
     ax.set_title(f"{run_dir.name}: loss per validation interval", fontsize=10)
     style_axes(ax)
     figure.tight_layout()
-    out_path = run_dir / "figures" / "loss_curve_log.png"
+    out_path = loss_curve_path(run_dir)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(out_path, dpi=150)
     plt.close(figure)
@@ -46,4 +48,4 @@ def main(run_dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("run_dir")
-    main(parser.parse_args().run_dir)
+    plot_loss_curve(parser.parse_args().run_dir)

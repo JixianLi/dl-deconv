@@ -2,10 +2,12 @@
 
   uv run python -m script.train config/baseline.yaml
 
-Writes into train.out_dir: checkpoint.pt (weights + config), metrics.csv (one row
-per validation, every train.val_interval iterations), and resolved_config.yaml.
-Assumes the dataset already exists at data.out_dir (run dataset.gen_data, then
-dataset.estimate_psf for noise.json).
+Writes the experiment folder train.out_dir (layout in core.run_layout): config.yaml,
+checkpoint/checkpoint.pt (weights + config), training/metrics.csv (one row per
+validation, every train.val_interval iterations), loss_curve/loss_log.png, and
+summary.txt, a plain-text table of the run's settings, parameter count, model and
+checkpoint size, wall time and machine. Assumes the dataset already exists at
+data.out_dir (run dataset.gen_data, then dataset.estimate_psf for noise.json).
 
 train_loss and val_loss are in the run's own loss, so they can't be compared across
 losses. The other val columns are computed on the 1-channel normalized-ideal prediction
@@ -26,8 +28,11 @@ of the val patches and can:
 """
 
 import csv
+import socket
+import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -35,9 +40,11 @@ from torch.utils.data import DataLoader, RandomSampler
 
 from core.config import dump_config, load_config
 from core.losses import flux_from_normalized, load_ideal_norm, load_loss, load_median_flux_sigma
+from core.run_layout import checkpoint_path, config_path, metrics_path, summary_path, write_summary
 from core.runtime import psnr, resolve_device, set_seed
 from dataset.patch_dataset import PatchDataset
-from model import build_model
+from model import SETTINGS_USED, build_model
+from script.plot_loss import plot_loss_curve
 
 
 RECOVERED_WITHIN_MAG = 0.5
@@ -93,8 +100,65 @@ def evaluate(model, loader, loss_fn, ideal_norm, faint_flux_limit, median_flux_s
     }
 
 
-def main(config_path):
-    config = load_config(config_path)
+def format_duration(seconds):
+    minutes, whole_seconds = divmod(round(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m {whole_seconds:02d}s ({seconds:.1f} s)"
+
+
+def git_commit():
+    """Short HEAD hash, marked when tracked files differ from it; 'unknown' outside a repo."""
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
+                                text=True, check=True).stdout.strip()
+        changes = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
+                                 capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return f"{commit} (with uncommitted changes)" if changes else commit
+
+
+def device_description(device):
+    if device.type == "cuda":
+        return f"cuda, {torch.cuda.get_device_name(device)}"
+    return device.type
+
+
+def summary_fields(config, model, checkpoint_bytes, wall_seconds, wall_time_scope,
+                   training_seconds, iterations, started, host, device, commit, notes=()):
+    """(label, value) rows of summary.txt. wall_time_scope says what the wall time covers;
+    each of notes becomes a Note row."""
+    model_settings = ", ".join(f"{key}={getattr(config.model, key)}"
+                               for key in SETTINGS_USED[config.model.name])
+    parameters = list(model.parameters())
+    parameter_bytes = sum(parameter.numel() * parameter.element_size() for parameter in parameters)
+    fields = [
+        ("Run directory", config.train.out_dir),
+        ("Model", f"{config.model.name} ({model_settings})"),
+        ("Loss", config.train.loss),
+        ("Seed", config.seed),
+        ("Iterations", iterations),
+        ("Batch size", config.train.batch_size),
+        ("Learning rate", config.train.lr),
+        ("Dataset", config.data.out_dir),
+        ("Parameters", f"{sum(parameter.numel() for parameter in parameters):,}"),
+        ("Model size", f"{parameter_bytes / 1e6:.3f} MB (parameters in memory)"),
+        ("Checkpoint size", f"{checkpoint_bytes / 1e6:.3f} MB"),
+        ("Total wall time", f"{format_duration(wall_seconds)}, {wall_time_scope}"),
+        ("Training time", f"{format_duration(training_seconds)}, training steps only"),
+        ("Train speed", f"{iterations / training_seconds:.1f} iterations/s"),
+        ("Started", started),
+        ("Host", host),
+        ("Device", device),
+        ("Git commit", commit),
+    ]
+    return fields + [("Note", note) for note in notes]
+
+
+def main(config_file):
+    script_start = time.perf_counter()
+    started = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    config = load_config(config_file)
     train_config = config.train
     set_seed(config.seed)
     device = resolve_device(train_config.device)
@@ -152,12 +216,24 @@ def main(config_path):
             seen = 0
             interval_start_time = time.perf_counter()
 
-    torch.save({"model_state": model.state_dict(), "config": config}, out_dir / "checkpoint.pt")
-    with open(out_dir / "metrics.csv", "w", newline="") as handle:
+    checkpoint_file = checkpoint_path(out_dir)
+    checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"model_state": model.state_dict(), "config": config}, checkpoint_file)
+    metrics_file = metrics_path(out_dir)
+    metrics_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(metrics_file, "w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(metrics[0]))
         writer.writeheader()
         writer.writerows(metrics)
-    dump_config(config, out_dir / "resolved_config.yaml")
+    dump_config(config, config_path(out_dir))
+    plot_loss_curve(out_dir)
+
+    fields = summary_fields(
+        config, model, checkpoint_file.stat().st_size, time.perf_counter() - script_start,
+        "train script start to end, validation included",
+        sum(row["train_seconds"] for row in metrics), metrics[-1]["iteration"], started,
+        socket.gethostname(), device_description(device), git_commit())
+    write_summary(summary_path(out_dir), fields)
     print(f"wrote run to {out_dir}")
 
 

@@ -1,6 +1,9 @@
 from model.deep_cnn import DeepCNN
 from model.espcn import ESPCN
 
+# The ModelConfig fields each model reads; the rest are defaults it ignores.
+SETTINGS_USED = {"espcn": ("channels",), "deep_cnn": ("num_layers", "channels")}
+
 
 def build_model(model_config, out_channels=1):
     if model_config.name == "espcn":
