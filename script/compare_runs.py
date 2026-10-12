@@ -1,9 +1,9 @@
 """Compare the photometry of several runs on one dataset.
 
-  uv run python -m script.compare_runs storage/runs/compare-weak-signal \
+  uv run python -m script.compare_runs storage/comparisons/compare-weak-signal \
       storage/runs/baseline storage/runs/mse storage/runs/deep storage/runs/deep_mse
 
-Reads each run's eval/<dataset>/photometry.csv and photometry_summary.json (run
+Reads each run's evaluation/photometry.csv and photometry_summary.json (run
 script.photometry first), prints the faint-flux totals and the per-S/N-regime scores
 of the model predictor, and writes compare_snr.png into the output dir. Runs are
 named by their directory.
@@ -16,6 +16,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+from core.run_layout import evaluation_dir
 from script.photometry import (RECOVERED_WITHIN_MAG, REFERENCE_LINE_COLOR, SNR_REFERENCE_LEVELS,
                                TEXT_SECONDARY, style_axes)
 
@@ -25,8 +26,8 @@ RECOVERED_KEY = f"frac_within_{RECOVERED_WITHIN_MAG}"
 END_LABEL_MIN_GAP_POINTS = 10
 
 
-def load_run(run_dir, dataset):
-    eval_dir = Path(run_dir) / "eval" / dataset
+def load_run(run_dir, dataset=None):
+    eval_dir = evaluation_dir(run_dir, dataset)
     with open(eval_dir / "photometry.csv", newline="") as handle:
         rows = [row for row in csv.DictReader(handle)
                 if row["predictor"] == "model" and row["aperture"] == "1x1"]
@@ -137,7 +138,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("out_dir")
     parser.add_argument("run_dirs", nargs="+")
-    parser.add_argument("--dataset", default="baseline",
-                        help="eval/<dataset> subdir to read from each run")
+    parser.add_argument("--dataset", default=None,
+                        help="read each run's evaluation-<dataset>/ instead of its own evaluation/")
     arguments = parser.parse_args()
     main(arguments.out_dir, arguments.run_dirs, arguments.dataset)

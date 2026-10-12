@@ -52,9 +52,9 @@ Two reference predictors (all zeros, and the train-region mean flux) are scored 
 way so every number has a floor to beat.
 
 Needs noise.json and crlb_flux_sigma.npy in the dataset dir (run dataset.estimate_psf first).
-Writes into <run_dir>/eval/<dataset>/: photometry.csv (one row per predictor x aperture x
-binning x bin), photometry_summary.json (whole-region flux totals, spurious flux, noise),
-and four figures.
+Writes into <run_dir>/evaluation/ (evaluation-<dataset>/ with --data): photometry.csv
+(one row per predictor x aperture x binning x bin), photometry_summary.json (whole-region
+flux totals, spurious flux, noise), and four figures.
 """
 
 import argparse
@@ -70,6 +70,7 @@ from matplotlib.colors import LinearSegmentedColormap, LogNorm
 from core.config import load_config
 from core.losses import load_loss
 from core.normalize import normalization_from_dict
+from core.run_layout import checkpoint_path, evaluation_dir, other_dataset_name
 from core.runtime import resolve_device
 from dataset.gen_data import load_fits
 from model import build_model
@@ -213,7 +214,7 @@ def faint_region_summary(predicted, truth, faint_region):
 def load_model(run_dir, data_dir=None):
     """(model, its map to the normalized ideal, config, device). The map uses the
     normalization of data_dir, by default the run's own dataset."""
-    checkpoint = torch.load(run_dir / "checkpoint.pt", weights_only=False)
+    checkpoint = torch.load(checkpoint_path(run_dir), weights_only=False)
     config = checkpoint["config"]
     device = resolve_device(config.train.device)
     loss = load_loss(config.train.loss, data_dir or config.data.out_dir)
@@ -432,7 +433,7 @@ def main(run_dir, data_override=None):
             **flux_summary(predicted, truth, val_mask, sources, bright, detection_level),
             **faint_region_summary(predicted, truth, faint_region)}
 
-    eval_dir = run_dir / "eval" / data_dir.name
+    eval_dir = evaluation_dir(run_dir, other_dataset_name(config.data.out_dir, data_dir))
     eval_dir.mkdir(parents=True, exist_ok=True)
     with open(eval_dir / "photometry.csv", "w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))

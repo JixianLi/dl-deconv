@@ -1,9 +1,9 @@
 """Compare the runs of a loss screen: final photometry, convergence and runtime.
 
-  uv run python -m script.compare_losses storage/runs/loss_screen_compare \
+  uv run python -m script.compare_losses storage/comparisons/loss_screen_compare \
       storage/runs/loss_screen/*/
 
-Reads each run's metrics.csv and eval/<dataset>/photometry.csv + photometry_summary.json
+Reads each run's training/metrics.csv and evaluation/photometry.csv + photometry_summary.json
 (run script.train and script.photometry first). Runs are named by their directory; any
 number of runs works (compare_runs is capped at 4 for its direct-labeled plots).
 
@@ -29,6 +29,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+from core.run_layout import metrics_path
 from script.compare_runs import RECOVERED_KEY, load_run, regime_label, rows_for
 from script.photometry import REFERENCE_LINE_COLOR, TEXT_SECONDARY, style_axes
 
@@ -48,7 +49,7 @@ REFERENCE_STYLES = {"l1": ("#8a8984", "-"), "mse": ("#52514e", "--")}
 
 
 def load_metrics(run_dir):
-    with open(Path(run_dir) / "metrics.csv", newline="") as handle:
+    with open(metrics_path(run_dir), newline="") as handle:
         rows = list(csv.DictReader(handle))
     return {key: np.array([float(row[key]) for row in rows]) for key in rows[0]}
 
@@ -211,7 +212,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("out_dir")
     parser.add_argument("run_dirs", nargs="+")
-    parser.add_argument("--dataset", default="baseline",
-                        help="eval/<dataset> subdir to read from each run")
+    parser.add_argument("--dataset", default=None,
+                        help="read each run's evaluation-<dataset>/ instead of its own evaluation/")
     arguments = parser.parse_args()
     main(arguments.out_dir, arguments.run_dirs, arguments.dataset)

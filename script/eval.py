@@ -5,7 +5,8 @@
 Reads the checkpoint (which carries its own config), scores the non-overlapping
 (stride = patch_size) train and val windows (loss + PSNR), saves Observed / Ideal /
 Predicted comparison grids per split, and predicts the full image in one
-convolutional pass, into <run_dir>/eval/. No held-out set: we report on both splits.
+convolutional pass, into <run_dir>/evaluation/ (evaluation-<dataset>/ with --data
+pointing at another dataset). No held-out set: we report on both splits.
 """
 
 import argparse
@@ -19,6 +20,7 @@ from torch.utils.data import DataLoader
 
 from core.config import load_config
 from core.losses import load_loss
+from core.run_layout import checkpoint_path, evaluation_dir, other_dataset_name
 from core.runtime import psnr, resolve_device, set_seed
 from dataset.patch_dataset import PatchDataset
 from model import build_model
@@ -136,7 +138,7 @@ def visualize_full(model, to_normalized_ideal, data, device, out_path):
 
 def main(run_dir, data_override=None):
     run_dir = Path(run_dir)
-    checkpoint = torch.load(run_dir / "checkpoint.pt", weights_only=False)
+    checkpoint = torch.load(checkpoint_path(run_dir), weights_only=False)
     config = checkpoint["config"]
     # Model comes from the checkpoint; the data spec can be a different dataset (e.g. another
     # band) via --data, so we can test how the trained weights transfer cross-domain.
@@ -150,7 +152,7 @@ def main(run_dir, data_override=None):
     model.load_state_dict(checkpoint["model_state"])
     model.eval()
 
-    eval_dir = run_dir / "eval" / Path(data.out_dir).name
+    eval_dir = evaluation_dir(run_dir, other_dataset_name(config.data.out_dir, data.out_dir))
     eval_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(config.seed)
     for split in ("train", "val"):

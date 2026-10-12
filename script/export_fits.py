@@ -2,11 +2,12 @@
 
   uv run python -m script.export_fits runs/baseline
 
-Writes into <run_dir>/result/<dataset>/ (see the README it emits for the layout):
-full input/target/prediction images, plus per-patch input/target/prediction FITS
-for every non-overlapping (stride = patch_size) train and val window, named by its
-corner in the full image. Everything is inverse-normalized back to physical flux,
-so a FITS viewer sees real values, not the [0, 1] training scale.
+Writes into <run_dir>/evaluation/export/ (evaluation-<dataset>/export/ with --data; see
+the README it emits for the layout): full input/target/prediction images, plus
+per-patch input/target/prediction FITS for every non-overlapping (stride = patch_size)
+train and val window, named by its corner in the full image. Everything is
+inverse-normalized back to physical flux, so a FITS viewer sees real values, not the
+[0, 1] training scale.
 """
 
 import argparse
@@ -20,6 +21,7 @@ from astropy.io import fits
 from core.config import load_config
 from core.losses import load_loss
 from core.normalize import normalization_from_dict
+from core.run_layout import checkpoint_path, export_dir, other_dataset_name
 from core.runtime import resolve_device
 from dataset.gen_data import load_fits
 from dataset.patch_dataset import PatchDataset
@@ -61,7 +63,7 @@ def write_fits(path, image):
 
 def main(run_dir, data_override=None):
     run_dir = Path(run_dir)
-    checkpoint = torch.load(run_dir / "checkpoint.pt", weights_only=False)
+    checkpoint = torch.load(checkpoint_path(run_dir), weights_only=False)
     config = checkpoint["config"]
     data = config.data if data_override is None else load_config(
         Path(data_override) / "resolved_config.yaml").data
@@ -77,7 +79,7 @@ def main(run_dir, data_override=None):
     observed_norm = normalization_from_dict(norms["observed"])
     ideal_norm = normalization_from_dict(norms["ideal"])
 
-    result_dir = run_dir / "result" / data_dir.name
+    result_dir = export_dir(run_dir, other_dataset_name(config.data.out_dir, data_dir))
     result_dir.mkdir(parents=True, exist_ok=True)
     write_fits(result_dir / "input.fits", load_fits(data.observed_fits))
     write_fits(result_dir / "target.fits", load_fits(data.ideal_fits))
