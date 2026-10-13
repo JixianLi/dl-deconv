@@ -5,7 +5,8 @@
     summary.txt                metadata table (write_summary)
     checkpoint/checkpoint.pt   weights + config
     training/metrics.csv       one row per validation interval
-    loss_curve/loss_log.png    train and val loss
+    loss_curve/loss_log.png    train and val loss, log scale
+    loss_curve/loss_linear.png the same, linear scale (losses such as an NLL go negative)
     evaluation/                eval and photometry on the run's own dataset
     evaluation/export/         physical-flux FITS, only if script.export_fits ran
     evaluation-<dataset>/      the same for another dataset, via --data
@@ -34,8 +35,8 @@ def metrics_path(run_dir):
     return Path(run_dir) / "training" / "metrics.csv"
 
 
-def loss_curve_path(run_dir):
-    return Path(run_dir) / "loss_curve" / "loss_log.png"
+def loss_curve_path(run_dir, scale):
+    return Path(run_dir) / "loss_curve" / f"loss_{scale}.png"
 
 
 def evaluation_dir(run_dir, other_dataset=None):
