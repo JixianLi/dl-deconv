@@ -15,15 +15,18 @@ Writes into the output dir loss_screen.csv, one row per run:
     past 90% of its change from the first to the final validation, and its value at 15k
     and 50k iterations (linearly interpolated between validations; NaN past the run's end);
   - runtime: median train iterations per second over validation intervals.
-For every run <name>_seed43 whose <name> is also present, a row seed_noise_<name> holds
-|<name> - <name>_seed43| per column: differences between losses smaller than that are noise.
+Runs <name>_seed<N> are seeds of the loss <name>. For every loss with several seeds, rows
+"<name> min", "<name> median" and "<name> max" hold that statistic across its seeds per
+column: differences between losses inside those ranges are seed noise.
 
-Also writes loss_screen_convergence.png: small multiples, one column per candidate (every
-run but the l1 and mse references), one row per val metric, the references in gray.
+Also writes loss_screen_convergence.png: small multiples, one column per candidate loss
+(every loss but the l1 and mse references) with each seed a thin line, one row per val
+metric, the references' seeds in gray.
 """
 
 import argparse
 import csv
+import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -43,7 +46,7 @@ CONVERGENCE_METRICS = (
 CONVERGED_FRACTION = 0.9
 CHECKPOINT_ITERATIONS = (15_000, 50_000)
 Y_RANGE_FROM_ITERATION = 15_000  # early transients (e.g. faint ratio ~800) would flatten every panel
-SEED_SUFFIX = "_seed43"
+SEED_SUFFIX = re.compile(r"_seed\d+$")
 CANDIDATE_COLOR = "#2a78d6"  # categorical slot 1
 REFERENCE_STYLES = {"l1": ("#8a8984", "-"), "mse": ("#52514e", "--")}
 
@@ -97,13 +100,24 @@ def table_row(rows, summary, metrics):
     return row
 
 
-def seed_noise_rows(table):
-    noise = {}
+def loss_name(run_name):
+    """The run's name without its _seed<N> suffix, shared by every seed of a loss."""
+    return SEED_SUFFIX.sub("", run_name)
+
+
+def seed_spread_rows(table):
+    groups = {}
     for name, row in table.items():
-        base = name.removesuffix(SEED_SUFFIX)
-        if name.endswith(SEED_SUFFIX) and base in table:
-            noise[f"seed_noise_{base}"] = {key: abs(table[base][key] - value) for key, value in row.items()}
-    return noise
+        groups.setdefault(loss_name(name), []).append(row)
+    spread = {}
+    for loss, rows in groups.items():
+        if len(rows) < 2:
+            continue
+        columns = list(dict.fromkeys(key for row in rows for key in row))
+        values = {key: np.array([row.get(key, np.nan) for row in rows], dtype=float) for key in columns}
+        for statistic, reduce in (("min", np.nanmin), ("median", np.nanmedian), ("max", np.nanmax)):
+            spread[f"{loss} {statistic}"] = {key: float(reduce(column)) for key, column in values.items()}
+    return spread
 
 
 def print_table(title, table, columns):
@@ -160,8 +174,11 @@ def row_y_limits(metrics_by_run, key):
 
 
 def plot_convergence(metrics_by_run, out_path):
-    candidates = [name for name in metrics_by_run if name not in REFERENCE_STYLES]
-    references = [name for name in REFERENCE_STYLES if name in metrics_by_run]
+    runs_of_loss = {}
+    for name in metrics_by_run:
+        runs_of_loss.setdefault(loss_name(name), []).append(name)
+    candidates = [loss for loss in runs_of_loss if loss not in REFERENCE_STYLES]
+    references = [loss for loss in REFERENCE_STYLES if loss in runs_of_loss]
     figure, axes = plt.subplots(len(CONVERGENCE_METRICS), len(candidates), sharex=True, sharey="row",
                                 figsize=(2.1 * len(candidates) + 1.2, 1.8 * len(CONVERGENCE_METRICS) + 1.0),
                                 squeeze=False)
@@ -170,27 +187,34 @@ def plot_convergence(metrics_by_run, out_path):
             ax = axes[index_row, index_column]
             for reference in references:
                 color, linestyle = REFERENCE_STYLES[reference]
-                metrics = metrics_by_run[reference]
-                ax.plot(metrics["iteration"], metrics[key], color=color, linestyle=linestyle, linewidth=1.5,
-                        label=f"{reference} (reference)")
-            metrics = metrics_by_run[candidate]
-            ax.plot(metrics["iteration"], metrics[key], color=CANDIDATE_COLOR, linewidth=2, label="candidate")
+                for index_run, run in enumerate(runs_of_loss[reference]):
+                    metrics = metrics_by_run[run]
+                    ax.plot(metrics["iteration"], metrics[key], color=color, linestyle=linestyle,
+                            linewidth=1.0, label=f"{reference} (reference)" if index_run == 0 else None)
+            candidate_runs = runs_of_loss[candidate]
+            for index_run, run in enumerate(candidate_runs):
+                metrics = metrics_by_run[run]
+                ax.plot(metrics["iteration"], metrics[key], color=CANDIDATE_COLOR,
+                        linewidth=1.0 if len(candidate_runs) > 1 else 2.0,
+                        label="candidate (one line per seed)" if index_run == 0 else None)
             if key == "val_faint_flux_ratio":
                 ax.axhline(1.0, color=REFERENCE_LINE_COLOR, linewidth=1)
             style_axes(ax)
             if index_row == 0:
-                ax.set_title(candidate, fontsize=9)
+                seeds = len(runs_of_loss[candidate])
+                ax.set_title(f"{candidate} ({seeds} seeds)" if seeds > 1 else candidate, fontsize=9)
             if index_column == 0:
                 ax.set_ylabel(label, fontsize=8)
             if index_row == len(CONVERGENCE_METRICS) - 1:
                 ax.set_xlabel("iteration", fontsize=8)
         axes[index_row, 0].set_ylim(row_y_limits(metrics_by_run, key))
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    figure.legend(handles, labels, loc="upper right", ncol=len(labels), fontsize=9, frameon=False)
+    figure.legend(handles, labels, loc="upper left", bbox_to_anchor=(0.02, 0.955), ncol=len(labels),
+                  fontsize=9, frameon=False)
     figure.suptitle(f"Loss screen: loss-agnostic val metrics per candidate (y range from iterations "
                     f"≥ {Y_RANGE_FROM_ITERATION // 1000}k; faint ratio target 1)",
                     fontsize=10, x=0.02, ha="left", color=TEXT_SECONDARY)
-    figure.tight_layout(rect=(0, 0, 1, 0.95))
+    figure.tight_layout(rect=(0, 0, 1, 0.93))
     figure.savefig(out_path, dpi=150)
     plt.close(figure)
     print(f"wrote {out_path}")
@@ -201,7 +225,7 @@ def main(out_dir, run_dirs, dataset):
     metrics_by_run = {name: load_metrics(run_dir) for name, run_dir in zip(names, run_dirs)}
     table = {name: table_row(*load_run(run_dir, dataset), metrics_by_run[name])
              for name, run_dir in zip(names, run_dirs)}
-    table.update(seed_noise_rows(table))
+    table.update(seed_spread_rows(table))
     print_tables(table)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
