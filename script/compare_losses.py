@@ -16,12 +16,16 @@ Writes into the output dir loss_screen.csv, one row per run:
     and 50k iterations (linearly interpolated between validations; NaN past the run's end);
   - runtime: median train iterations per second over validation intervals.
 Runs <name>_seed<N> are seeds of the loss <name>. For every loss with several seeds, rows
-"<name> min", "<name> median" and "<name> max" hold that statistic across its seeds per
-column: differences between losses inside those ranges are seed noise.
+"<name> min", "<name> median", "<name> max" and "<name> std" hold that statistic across its
+seeds per column: differences between losses inside those ranges are seed noise. A printed
+table names each loss's worst seed per final metric (farthest from 1 for a flux ratio,
+highest spurious flux, lowest accuracy).
 
 Also writes loss_screen_convergence.png: small multiples, one column per candidate loss
 (every loss but the l1 and mse references) with each seed a thin line, one row per val
-metric, the references' seeds in gray.
+metric, the references' seeds in gray; and loss_screen_final_spread.png: one panel per
+final metric, one column of dots per loss, one dot per seed, to compare how consistent the
+final models of each loss are.
 """
 
 import argparse
@@ -115,7 +119,8 @@ def seed_spread_rows(table):
             continue
         columns = list(dict.fromkeys(key for row in rows for key in row))
         values = {key: np.array([row.get(key, np.nan) for row in rows], dtype=float) for key in columns}
-        for statistic, reduce in (("min", np.nanmin), ("median", np.nanmedian), ("max", np.nanmax)):
+        for statistic, reduce in (("min", np.nanmin), ("median", np.nanmedian), ("max", np.nanmax),
+                                  ("std", lambda column: np.nanstd(column, ddof=1))):
             spread[f"{loss} {statistic}"] = {key: float(reduce(column)) for key, column in values.items()}
     return spread
 
@@ -220,17 +225,80 @@ def plot_convergence(metrics_by_run, out_path):
     print(f"wrote {out_path}")
 
 
+# (column, label, how a seed is worse): "ratio" = farther from 1, "high" = larger, "low" = smaller
+FINAL_METRICS = (
+    ("faint_region_flux_ratio", "faint-region flux ratio", "ratio"),
+    ("faint_source_flux_ratio", "faint-source flux ratio", "ratio"),
+    ("spurious_flux_fraction", "spurious flux fraction", "high"),
+    (f"snr_1-3_{RECOVERED_KEY}", "within 0.5 mag, S/N 1-3", "low"),
+    (f"snr_3-10_{RECOVERED_KEY}", "within 0.5 mag, S/N 3-10", "low"),
+)
+
+
+def runs_by_loss(table):
+    groups = {}
+    for name in table:
+        groups.setdefault(loss_name(name), []).append(name)
+    return groups
+
+
+def badness(value, worse):
+    return {"ratio": abs(value - 1.0), "high": value, "low": -value}[worse]
+
+
+def print_worst_seeds(table):
+    groups = runs_by_loss(table)
+    print("\nWorst seed per final metric")
+    for loss, names in groups.items():
+        if len(names) < 2:
+            continue
+        cells = []
+        for key, label, worse in FINAL_METRICS:
+            worst = max(names, key=lambda name: badness(table[name][key], worse))
+            cells.append(f"{label}: {table[worst][key]:.3f} ({worst})")
+        print(f"{loss}\n  " + "\n  ".join(cells))
+
+
+def plot_final_spread(table, out_path):
+    groups = runs_by_loss(table)
+    losses = list(groups)
+    figure, axes = plt.subplots(1, len(FINAL_METRICS), figsize=(3.0 * len(FINAL_METRICS), 3.8))
+    jitter = np.random.default_rng(0)
+    for ax, (key, label, worse) in zip(axes, FINAL_METRICS):
+        for position, loss in enumerate(losses):
+            values = np.array([table[name][key] for name in groups[loss]])
+            offsets = jitter.uniform(-0.18, 0.18, size=values.size)
+            ax.scatter(position + offsets, values, s=14, color=CANDIDATE_COLOR, alpha=0.7, linewidths=0)
+            ax.hlines(np.median(values), position - 0.3, position + 0.3, color=TEXT_SECONDARY, linewidth=1.5)
+        if worse == "ratio":
+            ax.axhline(1.0, color=REFERENCE_LINE_COLOR, linewidth=1)
+        ax.set_xticks(range(len(losses)), [f"{loss} ({len(groups[loss])})" for loss in losses],
+                      fontsize=8, rotation=30, ha="right")
+        ax.set_xlim(-0.6, len(losses) - 0.4)
+        ax.set_title(label, fontsize=9)
+        style_axes(ax)
+    figure.suptitle("Final metrics per seed (dot) with the median (bar); seeds per loss in brackets",
+                    fontsize=10, x=0.02, ha="left", color=TEXT_SECONDARY)
+    figure.tight_layout(rect=(0, 0, 1, 0.92))
+    figure.savefig(out_path, dpi=150)
+    plt.close(figure)
+    print(f"wrote {out_path}")
+
+
 def main(out_dir, run_dirs, dataset):
     names = [Path(run_dir).name for run_dir in run_dirs]
     metrics_by_run = {name: load_metrics(run_dir) for name, run_dir in zip(names, run_dirs)}
     table = {name: table_row(*load_run(run_dir, dataset), metrics_by_run[name])
              for name, run_dir in zip(names, run_dirs)}
+    per_run = dict(table)
     table.update(seed_spread_rows(table))
     print_tables(table)
+    print_worst_seeds(per_run)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     write_csv(table, out_dir / "loss_screen.csv")
     plot_convergence(metrics_by_run, out_dir / "loss_screen_convergence.png")
+    plot_final_spread(per_run, out_dir / "loss_screen_final_spread.png")
 
 
 if __name__ == "__main__":
