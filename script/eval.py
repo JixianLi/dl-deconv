@@ -4,8 +4,9 @@
 
 Reads the checkpoint (which carries its own config), scores the non-overlapping
 (stride = patch_size) train and val windows (loss + PSNR), saves Observed / Ideal /
-Predicted comparison grids per split, and predicts the full image in one
-convolutional pass, into <run_dir>/evaluation/ (evaluation-<dataset>/ with --data
+Predicted comparison grids of 6 train and 24 val patches in pages of 6
+(<split>_examples_<page>.png; the same patches in every run), and predicts the full
+image in one convolutional pass, into <run_dir>/evaluation/ (evaluation-<dataset>/ with --data
 pointing at another dataset). No held-out set: we report on both splits.
 """
 
@@ -25,7 +26,10 @@ from core.runtime import psnr, resolve_device, set_seed
 from dataset.patch_dataset import PatchDataset
 from model import build_model
 
-NUM_EXAMPLES = 6
+NUM_EXAMPLES = {"train": 6, "val": 24}
+EXAMPLES_PER_PAGE = 6
+# Fixed, not the run's seed, so every run shows the same patches and runs compare patch by patch.
+EXAMPLE_SEED = 0
 CMAP = "inferno"
 FULL_IMAGE_TILE_SIZE = 512
 
@@ -154,14 +158,16 @@ def main(run_dir, data_override=None):
 
     eval_dir = evaluation_dir(run_dir, other_dataset_name(config.data.out_dir, data.out_dir))
     eval_dir.mkdir(parents=True, exist_ok=True)
-    rng = np.random.default_rng(config.seed)
     for split in ("train", "val"):
         dataset = PatchDataset(data.out_dir, split, stride=data.patch_size)
         l1, mean_psnr = score(model, loss.to_normalized_ideal, dataset, device)
         print(f"{split}: n={len(dataset)}  l1={l1:.5f}  psnr={mean_psnr:.3f}")
-        indices = rng.choice(len(dataset), size=min(NUM_EXAMPLES, len(dataset)), replace=False)
-        visualize(model, loss.to_normalized_ideal, dataset, device, indices,
-                  eval_dir / f"{split}_examples.png")
+        rng = np.random.default_rng(EXAMPLE_SEED)
+        indices = np.sort(rng.choice(len(dataset), size=min(NUM_EXAMPLES[split], len(dataset)),
+                                     replace=False))
+        for page, start in enumerate(range(0, len(indices), EXAMPLES_PER_PAGE), start=1):
+            visualize(model, loss.to_normalized_ideal, dataset, device,
+                      indices[start:start + EXAMPLES_PER_PAGE], eval_dir / f"{split}_examples_{page}.png")
 
     visualize_full(model, loss.to_normalized_ideal, data, device, eval_dir / "full_comparison.png")
 
