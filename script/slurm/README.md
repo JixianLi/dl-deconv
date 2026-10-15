@@ -7,11 +7,13 @@ configs train in parallel on the one GPU. Each run folder follows the layout in
 Training saves at every validation, so a run cut off by the time limit keeps its metrics,
 latest checkpoint and summary; run eval and photometry on it afterwards.
 
-`submit_screen.sh <config dir> [sbatch args]` submits one job per config group: a base
-config and its `_seed<N>` repeats share a job.
+`submit_screen.sh <config dir> [--runs-per-job N] [sbatch args]` submits one job per
+config group: a base config and its `_seed<N>` repeats share a job. `--runs-per-job`
+splits a large group into jobs of at most N runs.
 
     bash script/slurm/submit_screen.sh config/loss_screen
     bash script/slurm/submit_screen.sh config/deep_screen -p gh -t 06:00:00
+    bash script/slurm/submit_screen.sh config/stability_screen --runs-per-job 5 -p gh -t 03:00:00
 
 The default is 2 hours on `gh` or `gh-dev`, enough for ESPCN. `gh-dev` caps jobs at
 2 hours, so longer jobs must name `-p gh`.
